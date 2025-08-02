@@ -1,10 +1,9 @@
-from fastapi import APIRouter, Depends, Request, Response
+from fastapi import APIRouter, Depends, Request, Response, Query
 from pydantic import BaseModel
 from database.models.user import User, UserCreateRequest, UserResponse
 from services.auth import AuthService
 from schemas.auth import (
-    ResendVerificationRequest, 
-    VerifyEmailTokenRequest, 
+    ResendVerificationRequest,  
     VerifyEmailResponse,
     LoginRequest
 )
@@ -31,16 +30,17 @@ async def register_user(request: Request, create_user_request: UserCreateRequest
         password=create_user_request.password
     )
 
-# Verify user email using token
+
+
 @auth_router.get("/verify-email", response_model=VerifyEmailResponse)
 @limiter.limit("10/minute")
-async def verify_email_route(request: Request, payload: VerifyEmailTokenRequest):
+async def verify_email_route(request: Request, token: str = Query(...)):
     """
     Verify a user's email using the token sent via email.
-
+    
     Rate limit: 10 requests per minute.
     """
-    return await auth_service.verify_email(token=payload.token)
+    return await auth_service.verify_email(token=token)
 
 # Resend email verification link
 @auth_router.post("/resend-verification-mail", response_model=VerifyEmailResponse)
