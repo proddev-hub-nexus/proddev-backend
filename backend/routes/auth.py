@@ -34,23 +34,26 @@ async def register_user(request: Request, create_user_request: UserCreateRequest
 
 @auth_router.get("/verify-email", response_model=VerifyEmailResponse)
 @limiter.limit("10/minute")
-async def verify_email_route(request: Request, token: str = Query(...)):
+async def verify_email_route(request: Request, response: Response, token: str = Query(...)):
     """
     Verify a user's email using the token sent via email.
     
     Rate limit: 10 requests per minute.
     """
-    return await auth_service.verify_email(token=token)
+    device_info = get_device_info_from_request(request)
+    return await auth_service.verify_email(token=token, response=response, device=device_info["platform"])
 
 # Resend email verification link
 @auth_router.post("/resend-verification-mail", response_model=VerifyEmailResponse)
 @limiter.limit("3/minute")
-async def resend_verification_link(request: Request, request_payload: ResendVerificationRequest):
+async def resend_verification_link(request: Request, response: Response, request_payload: ResendVerificationRequest):
     """
     Resend the email verification link to a user who hasn't verified yet.
 
     Rate limit: 3 requests per minute to prevent spamming.
     """
+    device_info = get_device_info_from_request(request)
+
     return await auth_service.resend_verification_link(request_payload.email)
 
 # Login a user and set HttpOnly cookie
