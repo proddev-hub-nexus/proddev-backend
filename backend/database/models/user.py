@@ -11,7 +11,7 @@ class User(Document):
     has_completed_onboarding: bool = False
     interested_courses: Optional[List[PydanticObjectId]] = []
     enrolled_courses: Optional[List[PydanticObjectId]] = []
-    active_tokens: Optional[List[Dict]] = None
+    active_tokens: List[Dict] = Field(default_factory=list)
     created_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
 
     class Settings:
@@ -27,9 +27,21 @@ class UserCreateRequest(BaseModel):
     password: str
     email: EmailStr
 
-class UserResponse(BaseModel):
-    id: str
-    full_name: Optional[str]
-    email: EmailStr
-    is_verified: bool
+class UserRegisterResponse(BaseModel):
+    user_id: str
     created_at: datetime
+class UserLoginResponse(BaseModel):
+    token_id: str
+    access_token: str
+    token_expires_in: datetime
+    device: str
+  
+class UserProfileResponse(BaseModel):
+    user_id: str
+    full_name: str
+    is_verified: bool
+    email: EmailStr
+    created_at: datetime
+
+class VerifyEmailResponse(UserLoginResponse):
+    message: str = "Email verified successfully"

@@ -1,6 +1,6 @@
 from fastapi import APIRouter, Depends, Request, Response, Query
 from pydantic import BaseModel
-from database.models.user import User, UserCreateRequest, UserResponse
+from database.models.user import User, UserCreateRequest, UserRegisterResponse, UserProfileResponse, UserLoginResponse
 from services.auth import AuthService
 from schemas.auth import (
     ResendVerificationRequest,  
@@ -16,7 +16,7 @@ auth_service = AuthService()
 # ------------------ AUTH ROUTES ------------------ #
 
 # Register a new user with full name, email, and password
-@auth_router.post("/register", response_model=UserResponse)
+@auth_router.post("/register", response_model=UserRegisterResponse)
 @limiter.limit("3/minute")
 async def register_user(request: Request, create_user_request: UserCreateRequest):
     """
@@ -57,7 +57,7 @@ async def resend_verification_link(request: Request, response: Response, request
     return await auth_service.resend_verification_link(request_payload.email)
 
 # Login a user and set HttpOnly cookie
-@auth_router.post("/login", response_model=UserResponse)
+@auth_router.post("/login", response_model=UserLoginResponse)
 @limiter.limit("5/minute")
 async def login_user(payload: LoginRequest, response: Response, request: Request):
     """
@@ -69,12 +69,13 @@ async def login_user(payload: LoginRequest, response: Response, request: Request
     return await auth_service.login(
         email=payload.email,
         password=payload.password,
-        response=response,
         device=device_info["platform"]
     )
 
 # Get the authenticated user's profile
-@auth_router.get("/profile", response_model=UserResponse)
+# Updated profile endpoint with debug logging
+# Updated profile endpoint with debug logging - FIXED
+@auth_router.get("/profile", response_model=UserProfileResponse)
 @limiter.limit("30/minute")
 async def get_profile_route(request: Request, current_user: User = Depends(get_current_user)):
     """
@@ -82,18 +83,38 @@ async def get_profile_route(request: Request, current_user: User = Depends(get_c
 
     Rate limit: 30 requests per minute.
     """
+    
+    # Debug logging - print what we receive
+    print(f"=== PROFILE ENDPOINT DEBUG ===")
+    print(f"Request URL: {request.url}")
+    print(f"Request method: {request.method}")
+    print(f"Request headers origin: {request.headers.get('origin')}")
+    print(f"Request headers host: {request.headers.get('host')}")
+    print(f"Request headers cookie: {request.headers.get('cookie')}")
+    print(f"All cookies: {dict(request.cookies)}")
+    
+    # Fixed: Handle None case properly
+    access_token = request.cookies.get('access_token')
+    if access_token:
+        print(f"Access token from cookies: {access_token[:20]}...")
+    else:
+        print(f"Access token from cookies: None")
+    
+    print(f"Current user: {current_user.email if current_user else 'None'}")
+    print(f"============================")
+    
     return await auth_service.get_profile(current_user)
 
 # Logout the current user
 @auth_router.post("/logout")
 @limiter.limit("10/minute")
-async def logout_user(request: Request, response: Response, user: User = Depends(get_current_user)):
-    """
-    Log the user out by clearing their authentication cookie and active token.
-
-    Rate limit: 10 requests per minute.
-    """
-    return await auth_service.logout(user, response)
+async def logout_user(
+    request: Request,
+    response: Response,
+    user_data: tuple[User, str] = Depends(get_current_user)
+):
+    user, token_id = user_data
+    return await auth_service.logout(user, token_id)
 
 # ------------------ ONBOARDING ------------------ #
 
@@ -110,3 +131,5 @@ async def complete_onboarding_route(request: Request, current_user: User = Depen
     Rate limit: 10 requests per minute.
     """
     return await auth_service.mark_onboarding_complete(current_user)
+
+

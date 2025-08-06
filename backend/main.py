@@ -16,10 +16,6 @@ from routes.oauth import oauth_router
 from fastapi.middleware.cors import CORSMiddleware
 #from utils.seed_courses import seed_courses
 
-origins = [
-    "http://localhost:3000",
-    "https://proddev-frontend.vercel.app",
-]
 
 
 @asynccontextmanager
@@ -41,12 +37,20 @@ app.add_exception_handler(
 )
 app.add_middleware(SlowAPIMiddleware)
 
+origins = [
+    "http://localhost:3000",
+    "http://127.0.0.1:3000", 
+    "http://127.0.0.1:3001",
+    "https://proddev-frontend.vercel.app",
+]
+
 app.add_middleware(
     CORSMiddleware,
     allow_origins=origins,
     allow_credentials=True,
-    allow_methods=["GET", "POST", "PUT", "DELETE"],
+    allow_methods=["GET", "POST", "PUT", "DELETE", "OPTIONS"],
     allow_headers=["*"],
+    expose_headers=["Set-Cookie"],
 )
 
 @app.get("/")

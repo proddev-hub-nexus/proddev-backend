@@ -3,7 +3,7 @@ import jwt
 from pathlib import Path
 from jwt.exceptions import InvalidTokenError, ExpiredSignatureError
 from datetime import datetime, timezone, timedelta
-from fastapi import Depends, HTTPException, status, Response, Request, BackgroundTasks
+from fastapi import Depends, HTTPException, Header, status, Response, Request, BackgroundTasks
 from passlib.context import CryptContext
 from typing import Optional
 from pydantic import BaseModel, SecretStr
@@ -76,6 +76,10 @@ def verify_access_token(token: str) -> dict:
     except (InvalidTokenError, ExpiredSignatureError):
         raise credentials_exception
 
+import os
+import logging
+
+# Add this to your auth.py
 def set_access_token_cookie(access_token: str, response: Response, expires_delta: Optional[timedelta] = None):
     """
     Set the JWT token in an HTTP-only secure cookie.
@@ -83,15 +87,28 @@ def set_access_token_cookie(access_token: str, response: Response, expires_delta
     expire = datetime.now(timezone.utc) + (expires_delta or timedelta(minutes=ACCESS_TOKEN_MINUTES))
     max_age = int((expire - datetime.now(timezone.utc)).total_seconds())
 
+    # Check if we're in development or production
+    is_production = os.environ.get("ENVIRONMENT", "development") == "production"
+    
+    # Debug logging
+    print(f"Setting cookie with:")
+    print(f"  - access_token length: {len(access_token)}")
+    print(f"  - max_age: {max_age}")
+    print(f"  - is_production: {is_production}")
+    print(f"  - secure: {is_production}")
+    print(f"  - samesite: {'none' if is_production else 'lax'}")
+    
     response.set_cookie(
         key="access_token",
         value=access_token,
         max_age=max_age,
         httponly=True,
-        secure=True,
-        samesite='none',
-        path='/'
+        secure=is_production,  # Only secure in production (HTTPS)
+        samesite="lax" if not is_production else "none",  # Use 'lax' for development
+        path='/', 
     )
+    
+    print("Cookie set successfully")
 
 def get_access_token_cookie(request: Request) -> dict:
     """
@@ -119,22 +136,12 @@ def get_access_token_cookie(request: Request) -> dict:
     return {"user_id": user_id}
 
 def clear_access_token_cookie(response: Response):
-    """
-    Clear the authentication cookie by setting it to expire immediately
-    """
-    response.set_cookie(
-        key='access_token',
-        value='',
-        max_age=0, 
-        expires=0,  
-        httponly=True,
-        secure=True,  
-        samesite='strict',  
-        path='/'
+    response.delete_cookie(
+        key="access_token",
+        #httponly=True,
+        #secure=True,
+        #path="/"
     )
-    response.delete_cookie(key="access_token")
-    
-    return response
 
 class VerifyEmailContext(BaseModel):
     full_name: str
@@ -164,38 +171,48 @@ def send_email_verification_link_background(background_tasks: BackgroundTasks, s
     background_tasks.add_task(
        fm.send_message, message, template_name='verify-email.html')
 
+async def get_current_user_with_token(request: Request) -> tuple[User, str]:
+    """Get current user and token_id - for logout endpoint"""
+    auth_header = request.headers.get("Authorization")
+    if not auth_header or not auth_header.startswith("Bearer "):
+        raise HTTPException(status_code=401, detail="Missing or invalid authorization header")
+
+    token = auth_header.split(" ")[1]
+    payload = verify_access_token(token)
+
+    user_id = payload.get("sub")
+    token_id = payload.get("token_id")
+    if not user_id or not token_id:
+        raise HTTPException(status_code=401, detail="Invalid token payload")
+
+    user = await User.get(user_id)
+    if not user or not any(t["active_token_id"] == token_id for t in user.active_tokens):
+        raise HTTPException(status_code=401, detail="Invalid or expired token")
+
+    return user, token_id
+
+
 async def get_current_user(request: Request) -> User:
-    token = request.cookies.get("access_token")
+    """Get current user only - for profile endpoint"""
+    auth_header = request.headers.get("Authorization")
+    if not auth_header or not auth_header.startswith("Bearer "):
+        raise HTTPException(status_code=401, detail="Missing or invalid authorization header")
 
-    if not token:
-        raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="Not authenticated. Token missing.",
-            headers={"WWW-Authenticate": "Bearer"}
-        )
+    token = auth_header.split(" ")[1]
+    payload = verify_access_token(token)
 
-    try:
-        payload = verify_access_token(token)
-        user_id = payload.get("sub")
-        if not user_id:
-            raise HTTPException(
-                status_code=status.HTTP_401_UNAUTHORIZED,
-                detail="Invalid token payload."
-            )
-        user = await User.get(user_id)
-        if not user:
-            raise HTTPException(
-                status_code=status.HTTP_404_NOT_FOUND,
-                detail="User not found."
-            )
-        return user
-    except Exception:
-        raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="Invalid or expired token."
-        )
+    user_id = payload.get("sub")
+    token_id = payload.get("token_id")
+    if not user_id or not token_id:
+        raise HTTPException(status_code=401, detail="Invalid token payload")
 
+    user = await User.get(user_id)
+    if not user or not any(t["active_token_id"] == token_id for t in user.active_tokens):
+        raise HTTPException(status_code=401, detail="Invalid or expired token")
 
+    return user  # Return just the user, not a tuple
+
+        
 def get_device_info_from_request(request: Request):
     """Extract device information from request headers in FastAPI"""
     user_agent = request.headers.get('User-Agent', '')

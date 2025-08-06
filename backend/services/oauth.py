@@ -3,13 +3,13 @@ import logging
 import requests
 from uuid import uuid4
 from datetime import datetime, timedelta, timezone
-from fastapi import HTTPException, status, Response
-from database.models.user import User, UserResponse
-from utils.auth import generate_access_token, set_access_token_cookie
+from fastapi import HTTPException, status
+from database.models.user import User, UserLoginResponse
+from utils.auth import generate_access_token
 
 class OAuthService:
-    async def login_with_google(self, auth_code: str, response: Response, device: str = "desktop") -> UserResponse:
-        # Step 1: Exchange code for access token
+    async def login_with_google(self, auth_code: str, device: str = "desktop") -> UserLoginResponse:
+        # Step 1: Exchange code for access token from Google
         token_data = {
             'code': auth_code,
             'client_id': os.environ['GOOGLE_CLIENT_ID'],
@@ -25,14 +25,14 @@ class OAuthService:
                 detail="Failed to obtain access token from Google."
             )
 
-        access_token = token_response.json().get("access_token")
-        if not access_token:
+        google_access_token = token_response.json().get("access_token")
+        if not google_access_token:
             raise HTTPException(status_code=401, detail="Access token missing from Google response")
 
-        # Step 2: Get user info
+        # Step 2: Get user info from Google
         user_info = requests.get(
             'https://www.googleapis.com/oauth2/v3/userinfo',
-            headers={'Authorization': f'Bearer {access_token}'}
+            headers={'Authorization': f'Bearer {google_access_token}'}
         ).json()
 
         email = user_info.get("email")
@@ -45,42 +45,36 @@ class OAuthService:
 
         # Step 3: Find or create user
         user = await User.find_one(User.email == email)
-
         if not user:
             user = User(
                 full_name=full_name,
                 email=email,
-                password="oauth_google",  # You may skip login-based password verification
+                password="oauth_google",
                 is_verified=is_verified,
-                has_completed_onboarding=False,
-                active_tokens=[]
+                has_completed_onboarding=False
             )
             await user.insert()
         else:
             if not user.is_verified and is_verified:
                 user.is_verified = True
 
-        # Step 4: Set active token
-        token_entry = {
-            "active_token_id": str(uuid4()),
+        # Step 4: Create app token + track token_id
+        token_id = str(uuid4())
+        app_access_token = generate_access_token(data={
+            "sub": str(user.id),
+            "token_id": token_id
+        })
+
+        user.active_tokens.append({
+            "active_token_id": token_id,
             "expires_in": (datetime.now(timezone.utc) + timedelta(minutes=60)).isoformat(),
             "device": device
-        }
-
-        if user.active_tokens is None:
-            user.active_tokens = []
-
-        user.active_tokens.append(token_entry)
+        })
         await user.save()
 
-        # Step 5: Set secure cookie
-        app_token = generate_access_token(data={"sub": str(user.id)})
-        set_access_token_cookie(app_token, response)
-
-        return UserResponse(
-            id=str(user.id),
-            full_name=user.full_name,
-            email=user.email,
-            is_verified=user.is_verified,
-            created_at=user.created_at
+        # Step 5: Return your app’s token + token_id
+        return UserLoginResponse(
+            user_id=str(user.id),
+            token_id=token_id,
+            access_token=app_access_token
         )
